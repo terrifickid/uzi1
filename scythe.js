@@ -128,14 +128,14 @@ function getPercentageChange(ask, bid){
       if(values.length < 200) return;
       enable = true;
 
-     //log([signal, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
+     log([signal, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
       if(!scythe)return;
             if(signal && buy.length < 5){
-             buy.push(trade.price);
+             //buy.push(trade.price);
             }
 
             if(!signal && sell.length < 5){
-             sell.push(trade.price);
+            // sell.push(trade.price);
             }
     });
 
@@ -171,8 +171,8 @@ function getSignal(){
       }
       if(testbuy && testsell){
         scythe = true;
-        console.log('SCYTHE', testbuy.toString(), testsell.toString(), getPercentageChange(testbuy, testsell) * 10);
-        exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(testbuy, testsell) * 10)) , time: time});
+        console.log('SCYTHE', testbuy.toString(), testsell.toString(), getPercentageChange(testbuy, testsell));
+        exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(testbuy, testsell))) , time: time});
         testbuy = false;
         testsell = false;
         if(signal) testsell = trade.price;

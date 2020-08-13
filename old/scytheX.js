@@ -6,13 +6,15 @@ const BinanceClient = require('node-binance-api');
 var symbol = process.argv[2];
 var p1 = process.argv[3];
 var p2 = process.argv[4];
+var frame = process.argv[5];
+
 const technicalIndicators = require('technicalindicators');
 technicalIndicators.setConfig('precision', p2);
 
 var values = [];
 
 var RSI = require('technicalindicators').RSI;
-var rsi = new RSI({period : 100, values : []});
+var rsi = new RSI({period : frame, values : []});
 
 var trade = {price: M.Decimal128.fromString(String(0))};
 var buy = [];
@@ -84,7 +86,7 @@ function getPercentageChange(ask, bid){
 
 
   // Connection
-  const dbName = 'scythe1';
+  const dbName = process.argv[5];
   const url = "mongodb+srv://tk:test123@data.owryg.gcp.mongodb.net/"+dbName+"?retryWrites=true&w=majority";
   const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true});
 
@@ -124,11 +126,11 @@ function getPercentageChange(ask, bid){
       k = deltadelta(m);
       cAVG = round(getAvg(values), 2);
       values.push( parseFloat(price.toString()) );
-      if(values.length > 200) values.shift();
-      if(values.length < 200) return;
+      if(values.length > frame) values.shift();
+      if(values.length < frame) return;
       enable = true;
 
-//     log([signal, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
+     log([signal, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
       if(!scythe)return;
             if(signal && buy.length < 5){
              //buy.push(trade.price);

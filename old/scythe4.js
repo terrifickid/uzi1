@@ -1,3 +1,4 @@
+
 var M = require('mongodb');
 ObjectID = M.ObjectID;
 const MongoClient = M.MongoClient;
@@ -12,13 +13,15 @@ technicalIndicators.setConfig('precision', p2);
 var values = [];
 
 var RSI = require('technicalindicators').RSI;
-var rsi = new RSI({period : 100, values : []});
+var rsi;
 
+var drop = [];
 var trade = {price: M.Decimal128.fromString(String(0))};
 var buy = [];
 var sell = [];
 var cRSI;
 var cAVG;
+var cAVG2;
 var trend = [];
 var trendtrend = [];
 var m = 0;
@@ -29,9 +32,10 @@ var testbuy = false;
 var testsell = false;
 var enable = false;
 var scythe = false;
+var frame = 100;
 
 function t(){
-  if(cAVG < trade.price) return true;
+  if(cAVG2 < cAVG) return true;
   return false;
 
 }
@@ -44,10 +48,9 @@ async function log(data = []){
     }
 
     function delta(value){
-      var d = getAvg(trend);
-      if(trend.length > 15)trend.shift();
       trend.push(value);
-      return round(d,0);
+      if(trend.length > frame)trend.shift();
+      return round(getAvg(trend), 2);
     }
 
     function deltadelta(value){
@@ -84,7 +87,7 @@ function getPercentageChange(ask, bid){
 
 
   // Connection
-  const dbName = 'scythe1';
+  const dbName = 'scythe4';
   const url = "mongodb+srv://tk:test123@data.owryg.gcp.mongodb.net/"+dbName+"?retryWrites=true&w=majority";
   const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true});
 
@@ -112,32 +115,33 @@ function getPercentageChange(ask, bid){
 
   setInterval(getSignal,1000);
 
+
+var count = 0;
     binance.websockets.trades([symbol], async function(trades){
        var time = new Date().getTime();
       let {e:eventType, E:eventTime, s:symbol, p:price, q:quantity, m:maker, a:tradeId} = trades;
       trade = {eventTime: eventTime, price:  M.Decimal128.fromString(price)};
 
       //Indicators
-
-      cRSI = rsi.nextValue(trade.price);
-      m = delta(cRSI);
-      k = deltadelta(m);
-      cAVG = round(getAvg(values), 2);
       values.push( parseFloat(price.toString()) );
-      if(values.length > 200) values.shift();
-      if(values.length < 200) return;
+      if(values.length > frame) values.shift();
+      if(values.length < frame) return;
+      cAVG = round(getAvg(values), 2);
+      cAVG2 = delta(cAVG);
       enable = true;
-
-//     log([signal, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
-      if(!scythe)return;
-            if(signal && buy.length < 5){
-             //buy.push(trade.price);
+          
+ if(scythe && signal && count < 10 && cRSI >= 70 && round(getPercentageChange(testbuy, trade.price), 2)){
+          count++;
+          console.log('L', parseFloat(testbuy.toString()), parseFloat(trade.price.toString()), '$'+getPercentageChange(testbuy, trade.price));
+          exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(testbuy, trade.price))) , time: time});    
             }
 
-            if(!signal && sell.length < 5){
-            // sell.push(trade.price);
+            if(scythe && !signal && !testbuy && cRSI < 20){
+           //   buy.push(trade.price);
             }
-    });
+     	
+// log([signal, cAVG2, cAVG, parseFloat(trade.price.toString()), testbuy, testsell,  round(getPercentageChange(testbuy, trade.price), 2), round(getPercentageChange(testsell, trade.price), 2)]);
+  });
 
 
 
@@ -148,10 +152,13 @@ function getSignal(){
   var signaln = t();
   if(signal !== 1){
     if(signal !== signaln && enable){
+       scythe = true;
       console.log(signal, signaln);
 
       //BUY!!!
       if(!signal && signaln){
+        count = 0;
+        drop = [];
         testbuy = trade.price;
         sell.forEach(async function(price, index) {
           console.log('S', parseFloat(price.toString()), parseFloat(trade.price.toString()), '$'+getPercentageChange(trade.price, price));
@@ -170,13 +177,13 @@ function getSignal(){
         buy = [];
       }
       if(testbuy && testsell){
-        scythe = true;
+        rsi = new RSI({period : 20, values : []});
         console.log('SCYTHE', testbuy.toString(), testsell.toString(), getPercentageChange(testbuy, testsell));
         exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(testbuy, testsell))) , time: time});
         testbuy = false;
         testsell = false;
-        if(signal) testsell = trade.price;
-        if(!signal) testbuy = trade.price;
+         if(signal) testsell = trade.price;
+         if(!signal) testbuy = trade.price;
       }
       signal = signaln;
 

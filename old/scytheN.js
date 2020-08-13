@@ -11,8 +11,6 @@ technicalIndicators.setConfig('precision', p2);
 
 var values = [];
 
-var RSI = require('technicalindicators').RSI;
-var rsi = new RSI({period : 100, values : []});
 
 var trade = {price: M.Decimal128.fromString(String(0))};
 var buy = [];
@@ -23,12 +21,18 @@ var trend = [];
 var trendtrend = [];
 var m = 0;
 var k = 0;
-var signal = 1;
+var signal = 'off';
 var signalp = 1;
 var testbuy = false;
 var testsell = false;
 var enable = false;
 var scythe = false;
+var frame = process.argv[5];
+var pulse = process.argv[6];
+var db = process.argv[7];
+var mode;
+
+var RSI = require('technicalindicators').RSI;
 
 function t(){
   if(cAVG < trade.price) return true;
@@ -44,9 +48,9 @@ async function log(data = []){
     }
 
     function delta(value){
-      var d = getAvg(trend);
-      if(trend.length > 15)trend.shift();
       trend.push(value);
+      if(trend.length > 3)trend.shift();
+      var d = getAvg(trend);
       return round(d,0);
     }
 
@@ -60,7 +64,10 @@ async function log(data = []){
     }
 
 function getAvg(grades) {
-  const total = grades.reduce((acc, c) => acc + c, 0);
+  var total = 0;
+  grades.forEach(function(grade){
+   total = total + grade;
+  });
   return total / grades.length;
 }
 
@@ -80,11 +87,12 @@ function getPercentageChange(ask, bid){
         return pc;
     }
 
+
 (async function() {
 
 
   // Connection
-  const dbName = 'scythe1';
+  const dbName = process.argv[7];
   const url = "mongodb+srv://tk:test123@data.owryg.gcp.mongodb.net/"+dbName+"?retryWrites=true&w=majority";
   const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true});
 
@@ -110,80 +118,75 @@ function getPercentageChange(ask, bid){
           test: true // If you want to use sandbox mode where orders are simulated
     });
 
-  setInterval(getSignal,1000);
 
     binance.websockets.trades([symbol], async function(trades){
        var time = new Date().getTime();
       let {e:eventType, E:eventTime, s:symbol, p:price, q:quantity, m:maker, a:tradeId} = trades;
       trade = {eventTime: eventTime, price:  M.Decimal128.fromString(price)};
-
-      //Indicators
-
-      cRSI = rsi.nextValue(trade.price);
-      m = delta(cRSI);
-      k = deltadelta(m);
-      cAVG = round(getAvg(values), 2);
-      values.push( parseFloat(price.toString()) );
-      if(values.length > 200) values.shift();
-      if(values.length < 200) return;
-      enable = true;
-
-//     log([signal, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
-      if(!scythe)return;
-            if(signal && buy.length < 5){
-             //buy.push(trade.price);
-            }
-
-            if(!signal && sell.length < 5){
-            // sell.push(trade.price);
-            }
     });
-
-
+    
+setInterval(getSignal,pulse);
 
 })();
 
 function getSignal(){
+ //Indicators
+ 	
+      values.push( parseFloat(trade.price.toString()) );
+      if(values.length > frame) values.shift();
+      if(values.length < frame) return;
+      cRSI = RSI.calculate({period : frame-1, values : values});
+      cRSI = round(cRSI[0],0);
+      m = delta(cRSI);
+      k = deltadelta(m);
+      cAVG = round(getAvg(values), 2);
+      log([signal, testbuy, testsell, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
+
+     
+
   var time = new Date().getTime();
-  var signaln = t();
-  if(signal !== 1){
-    if(signal !== signaln && enable){
-      console.log(signal, signaln);
-
+    signaln = t();
+    if(signal == 'off') signal = signaln;
+    if(signal != signaln){
+      scythe = true;
       //BUY!!!
-      if(!signal && signaln){
-        testbuy = trade.price;
-        sell.forEach(async function(price, index) {
-          console.log('S', parseFloat(price.toString()), parseFloat(trade.price.toString()), '$'+getPercentageChange(trade.price, price));
-          exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(trade.price, price))) , time: time});
-        });
-        sell = [];
+      if(!signal && signaln && !testbuy){
+     //   testbuy = trade.price;
+     //   console.log('L');
       }
-
       //SELL!!!
-      if(signal && !signaln){
-        testsell = trade.price;
-        buy.forEach(async function(price, index) {
-          console.log('L', parseFloat(price.toString()), parseFloat(trade.price.toString()), '$'+getPercentageChange(price,trade.price));
-          exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(price,trade.price))) , time: time});
-        });
-        buy = [];
-      }
+      if(signal && !signaln && !testsell){
+       //  testsell = trade.price;
+       //  console.log('S');
+     }
+
+      signal = signaln;
+    }
+
+        if(scythe && !testbuy && round(cRSI,0) >= m  )testbuy = trade.price;
+        if(scythe && !testsell && round(cRSI,0) <= m ) testsell = trade.price;        
+        
       if(testbuy && testsell){
-        scythe = true;
+        
+
         console.log('SCYTHE', testbuy.toString(), testsell.toString(), getPercentageChange(testbuy, testsell));
         exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(testbuy, testsell))) , time: time});
+
         testbuy = false;
         testsell = false;
-        if(signal) testsell = trade.price;
-        if(!signal) testbuy = trade.price;
-      }
-      signal = signaln;
 
-    }
-  }else{
-    signal = signaln;
-  }
+        if(signal){
+        // console.log('S');
+	// testsell = trade.price;
+	}
+
+        if(!signal){
+        //console.log('L');
+         // testbuy = trade.price;
+        }
+      }
+
+  
 }
 
 

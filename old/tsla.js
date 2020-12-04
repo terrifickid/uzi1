@@ -2,6 +2,7 @@ var M = require('mongodb');
 ObjectID = M.ObjectID;
 const MongoClient = M.MongoClient;
 const BinanceClient = require('node-binance-api');
+const Alpaca = require('@alpacahq/alpaca-trade-api');
 
 var symbol = process.argv[2];
 var p1 = process.argv[3];
@@ -84,7 +85,7 @@ function getPercentageChange(ask, bid){
 
 
   // Connection
-  const dbName = 'scythe1';
+  const dbName = 'tsla';
   const url = "mongodb+srv://tk:test123@data.owryg.gcp.mongodb.net/"+dbName+"?retryWrites=true&w=majority";
   const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true});
 
@@ -103,43 +104,48 @@ function getPercentageChange(ask, bid){
 
   console.log('init...');
 
-  var binance = new BinanceClient().options({
-          APIKEY: 'dKh1FqWiDlLGVxzWWsE4a3GzSQlgaClnk9K1lXebdBrkXVc4ZiHLKukv6lBVOuWZ',
-          APISECRET: 'NXjBmcFKIHemPviszdYSU6zJ0Xlo6SpHtxcBgLpn7CO3vNs02iQSTxmliBpg7eOb',
-          useServerTime: true, // If you get timestamp errors, synchronize to server time at startup
-          test: true // If you want to use sandbox mode where orders are simulated
-    });
+  const alpaca = new Alpaca({
+    keyId: 'PKWV6X3Q1POAQD0HU6JJ',
+    secretKey: 'Lw4ULKMX98zL017GZH4ML3wm0ZW2ndhDSlyEkRR5',
+    paper: true,
+    usePolygon: false
+  })
 
-  setInterval(getSignal,1000);
+  const al = alpaca.data_ws
+    al.onConnect(function() {
+      console.log("Connected")
+      al.subscribe(['alpacadatav1/T.TSLA'])
+    })
+    al.onDisconnect(() => {
+      console.log("Disconnected")
+    })
 
-    binance.websockets.trades([symbol], async function(trades){
-       var time = new Date().getTime();
-      let {e:eventType, E:eventTime, s:symbol, p:price, q:quantity, m:maker, a:tradeId} = trades;
-      trade = {eventTime: eventTime, price:  M.Decimal128.fromString(price)};
+al.onStockTrades(function(subject, data) {
+ var time = new Date().getTime();
+ trade = {eventTime: time, price:  M.Decimal128.fromString(String(data.price))};
+     //Indicators
 
-      //Indicators
+        cRSI = rsi.nextValue(trade.price);
+        m = delta(cRSI);
+        k = deltadelta(m);
+        cAVG = round(getAvg(values), 2);
+        values.push( parseFloat(trade.price.toString()) );
+        if(values.length > 150) values.shift();
+        if(values.length < 150) return;
+        enable = true;
 
-      cRSI = rsi.nextValue(trade.price);
-      m = delta(cRSI);
-      k = deltadelta(m);
-      cAVG = round(getAvg(values), 2);
-      values.push( parseFloat(price.toString()) );
-      if(values.length > 200) values.shift();
-      if(values.length < 200) return;
-      enable = true;
+        log([signal, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
+       
+        getSignal();
+})
 
-//     log([signal, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
-      if(!scythe)return;
-            if(signal && buy.length < 5){
-             //buy.push(trade.price);
-            }
-
-            if(!signal && sell.length < 5){
-            // sell.push(trade.price);
-            }
-    });
+al.connect();
 
 
+ 
+
+ 
+ 
 
 })();
 

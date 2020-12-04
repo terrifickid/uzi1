@@ -1,22 +1,15 @@
 module.exports = {
   apps : [{
-    name: 'scythe',
-    script: 'scythe.js',
+    name: 'scythe2',
+    script: 'scythe2.js',
     watch: false,
-    args: 'btcusdt 2 4',
     log_file: 'scythe.log',
   },{   
-    name: 'turtle5MS',
-    script: 'turtle.js',
+    name: 'tsla2',
+    script: 'tsla2.js',
     watch: false,
-    args: 'btcusdt 2 4 turtle5MS 55 500',
+    args: 'btcusdt 2 4 butch 11 1000',
     log_file: 'scythe.log',
-  },{
-    name: 'skittle',
-    script: 'skittle.js',
-    watch: false,
-    args: 'btcusdt 2 4 skittle 55 1000',
-    log_file: 'scythe.log',
-  ,
+        }
 ]
 };

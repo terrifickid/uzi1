@@ -2,7 +2,7 @@ var _ = require('lodash');
 var M = require('mongodb');
 ObjectID = M.ObjectID;
 const MongoClient = M.MongoClient;
-const BinanceClient = require('node-binance-api');
+const Alpaca = require('@alpacahq/alpaca-trade-api');
 
 const { create, all } = require('mathjs');
 
@@ -87,26 +87,36 @@ function getPercentageChange(ask, bid){
 
   console.log('init...');
 
-  var binance = new BinanceClient().options({
-          APIKEY: 'dKh1FqWiDlLGVxzWWsE4a3GzSQlgaClnk9K1lXebdBrkXVc4ZiHLKukv6lBVOuWZ',
-          APISECRET: 'NXjBmcFKIHemPviszdYSU6zJ0Xlo6SpHtxcBgLpn7CO3vNs02iQSTxmliBpg7eOb',
-          useServerTime: true, // If you get timestamp errors, synchronize to server time at startup
-          test: true // If you want to use sandbox mode where orders are simulated
-    });
+  const alpaca = new Alpaca({
+    keyId: 'PKWV6X3Q1POAQD0HU6JJ',
+    secretKey: 'Lw4ULKMX98zL017GZH4ML3wm0ZW2ndhDSlyEkRR5',
+    paper: true,
+    usePolygon: false
+  })
 
-  setInterval(getSignal,pulse);
 
-  binance.websockets.trades([symbol], async function(trades){
-       var time = new Date().getTime();
-      let {e:eventType, E:eventTime, s:symbol, p:price, q:quantity, m:maker, a:tradeId} = trades;
-      trade = {eventTime: eventTime, price:  M.Decimal128.fromString(price)};
+  const al = alpaca.data_ws
+al.onConnect(function() {
+  console.log("Connected")
+  al.subscribe(['alpacadatav1/T.TSLA'])
+})
+al.onDisconnect(() => {
+  console.log("Disconnected")
+})
 
-      //Indicators
-      values.push( parseFloat(price.toString()) );
-      if(values.length > frame) values.shift();
-      if(values.length < frame) return;
-      enable = true;
-  });
+al.onStockTrades(function(subject, data) {
+ var time = new Date().getTime();
+ console.log(data.price);
+   trade = {eventTime: time, price:  M.Decimal128.fromString(String(data.price))};
+   //Indicators
+    values.push( parseFloat(trade.price.toString()) );
+    if(values.length > frame) values.shift();
+    if(values.length < frame) return;
+    enable = true;
+   getSignal();
+})
+
+al.connect();
 
 
 
@@ -115,11 +125,11 @@ function getPercentageChange(ask, bid){
 function g(){
 //Long
 if( getPercentageChange(math.max(values), trade.price) >= 0 ) ld = true;
-if( getPercentageChange(math.min(_.takeRight(values,frame/2)), trade.price) <= 0 ) ld = false;
+if( getPercentageChange(math.min(_.takeRight(values,frame/3)), trade.price) <= 0 ) ld = false;
 
 //Short
 if( getPercentageChange(math.min(values), trade.price) <= 0 ) sd = true;
-if( getPercentageChange(math.max(_.takeRight(values,frame/2)), trade.price) >= 0 ) sd = false;
+if( getPercentageChange(math.max(_.takeRight(values,frame/3)), trade.price) >= 0 ) sd = false;
 }
 
 
@@ -153,6 +163,5 @@ function getSignal(){
   }
   
 }
-
 
 

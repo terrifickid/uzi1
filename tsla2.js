@@ -1,7 +1,9 @@
+var frame = 200;
 var M = require('mongodb');
 ObjectID = M.ObjectID;
 const MongoClient = M.MongoClient;
 const BinanceClient = require('node-binance-api');
+const Alpaca = require('@alpacahq/alpaca-trade-api');
 
 var symbol = process.argv[2];
 var p1 = process.argv[3];
@@ -12,7 +14,7 @@ technicalIndicators.setConfig('precision', p2);
 var values = [];
 
 var RSI = require('technicalindicators').RSI;
-var rsi = new RSI({period : 100, values : []});
+var rsi = new RSI({period : frame, values : []});
 
 var trade = {price: M.Decimal128.fromString(String(0))};
 var buy = [];
@@ -45,7 +47,7 @@ async function log(data = []){
 
     function delta(value){
       var d = getAvg(trend);
-      if(trend.length > 15)trend.shift();
+      if(trend.length > 3)trend.shift();
       trend.push(value);
       return round(d,0);
     }
@@ -84,7 +86,7 @@ function getPercentageChange(ask, bid){
 
 
   // Connection
-  const dbName = 'scythe1';
+  const dbName = 'tsla';
   const url = "mongodb+srv://tk:test123@data.owryg.gcp.mongodb.net/"+dbName+"?retryWrites=true&w=majority";
   const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true});
 
@@ -103,83 +105,89 @@ function getPercentageChange(ask, bid){
 
   console.log('init...');
 
-  var binance = new BinanceClient().options({
-          APIKEY: 'dKh1FqWiDlLGVxzWWsE4a3GzSQlgaClnk9K1lXebdBrkXVc4ZiHLKukv6lBVOuWZ',
-          APISECRET: 'NXjBmcFKIHemPviszdYSU6zJ0Xlo6SpHtxcBgLpn7CO3vNs02iQSTxmliBpg7eOb',
-          useServerTime: true, // If you get timestamp errors, synchronize to server time at startup
-          test: true // If you want to use sandbox mode where orders are simulated
-    });
+  const alpaca = new Alpaca({
+    keyId: 'PKWV6X3Q1POAQD0HU6JJ',
+    secretKey: 'Lw4ULKMX98zL017GZH4ML3wm0ZW2ndhDSlyEkRR5',
+    paper: true,
+    usePolygon: false
+  })
 
-  setInterval(getSignal,1000);
+  const al = alpaca.data_ws
+    al.onConnect(function() {
+      console.log("Connected")
+      al.subscribe(['alpacadatav1/T.TSLA'])
+    })
+    al.onDisconnect(() => {
+      console.log("Disconnected")
+    })
 
-    binance.websockets.trades([symbol], async function(trades){
-       var time = new Date().getTime();
-      let {e:eventType, E:eventTime, s:symbol, p:price, q:quantity, m:maker, a:tradeId} = trades;
-      trade = {eventTime: eventTime, price:  M.Decimal128.fromString(price)};
+al.onStockTrades(function(subject, data) {
+ var time = new Date().getTime();
+ trade = {eventTime: time, price:  M.Decimal128.fromString(String(data.price))};
+     //Indicators
 
-      //Indicators
+        cRSI = rsi.nextValue(trade.price);
+        m = delta(cRSI);
+        k = deltadelta(m);
+        cAVG = round(getAvg(values), 2);
+        values.push( parseFloat(trade.price.toString()) );
+        if(values.length > frame) values.shift();
+        //if(values.length < frame) return;
+        enable = true;
 
-      cRSI = rsi.nextValue(trade.price);
-      m = delta(cRSI);
-      k = deltadelta(m);
-      cAVG = round(getAvg(values), 2);
-      values.push( parseFloat(price.toString()) );
-      if(values.length > 200) values.shift();
-      if(values.length < 200) return;
-      enable = true;
+        getSignal();
+        
+        //Rising
+        if(signal && !testbuy){
+            testbuy = trade.price;
+            if(testsell){
+            console.log('SCYTHE', trade.price.toString(), testsell.toString(), getPercentageChange(trade.price, testsell));
+            exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(testbuy, trade.price))) , time: time});
+            testsell = null;
+            }	
+       }
 
-//     log([signal, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
-      if(!scythe)return;
-            if(signal && buy.length < 5){
-             //buy.push(trade.price);
-            }
+	//Falling
+        if(!signal && !testsell){
+	   testsell = trade.price;
+           if(testbuy){
+           console.log('SCYTHE', testbuy.toString(), trade.price.toString(), getPercentageChange(testbuy, trade.price));
+           exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(testbuy, trade.price))) , time: time});
+           testbuy = null;
+           }
+        }
+	
+	if(getPercentageChange(testbuy, trade.price) >= 0.01){
+	 console.log('L', testbuy.toString(), trade.price.toString(), getPercentageChange(testbuy, trade.price));
+         exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(testbuy, trade.price))) , time: time});
+	 testbuy = false;
+        }
 
-            if(!signal && sell.length < 5){
-            // sell.push(trade.price);
-            }
-    });
+         if(getPercentageChange(trade.price, testsell) >= 0.01){ 
+         console.log('S', trade.price.toString(), testsell.toString(), getPercentageChange(trade.price, testsell));
+         exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(trade.price, testsell))) , time: time});
+         testsell = false; 
+        }
+
+        log([signal, cAVG, parseFloat(trade.price.toString()), getPercentageChange(testbuy, trade.price), getPercentageChange(trade.price, testsell)]);
+
+})
+
+al.connect();
 
 
+ 
+
+ 
+ 
 
 })();
 
 function getSignal(){
-  var time = new Date().getTime();
   var signaln = t();
   if(signal !== 1){
     if(signal !== signaln && enable){
-//      console.log(signal, signaln);
-
-      //BUY!!!
-      if(!signal && signaln){
-        testbuy = trade.price;
-        sell.forEach(async function(price, index) {
-          console.log('S', parseFloat(price.toString()), parseFloat(trade.price.toString()), '$'+getPercentageChange(trade.price, price));
-          exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(trade.price, price))) , time: time});
-        });
-        sell = [];
-      }
-
-      //SELL!!!
-      if(signal && !signaln){
-        testsell = trade.price;
-        buy.forEach(async function(price, index) {
-          console.log('L', parseFloat(price.toString()), parseFloat(trade.price.toString()), '$'+getPercentageChange(price,trade.price));
-          exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(price,trade.price))) , time: time});
-        });
-        buy = [];
-      }
-      if(testbuy && testsell){
-        scythe = true;
-        console.log('SCYTHE', testbuy.toString(), testsell.toString(), getPercentageChange(testbuy, testsell));
-        exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(testbuy, testsell))) , time: time});
-        testbuy = false;
-        testsell = false;
-        if(signal) testsell = trade.price;
-        if(!signal) testbuy = trade.price;
-      }
       signal = signaln;
-
     }
   }else{
     signal = signaln;

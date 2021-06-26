@@ -1,205 +1,284 @@
-var M = require('mongodb');
-ObjectID = M.ObjectID;
-const MongoClient = M.MongoClient;
-const BinanceClient = require('node-binance-api');
+module.exports = class SCYTHE {
+  constructor(name, frame) {
+    const scope = this;
+    //Libs
+    const redis = require("redis");
+    const red = redis.createClient();
+    const { promisify } = require("util");
 
-var symbol = process.argv[2];
-var p1 = process.argv[3];
-var p2 = process.argv[4];
-const technicalIndicators = require('technicalindicators');
-technicalIndicators.setConfig('precision', p2);
 
-var values = [];
+    //REDIS FUNCS
+    this.rpush = promisify(red.rpush).bind(red);
+    this.lrange = promisify(red.lrange).bind(red);
 
-var RSI = require('technicalindicators').RSI;
-var rsi = new RSI({period : 100, values : []});
+    //Vars
+    this.name = name;
+    this.nm = [];
+    this.frame = frame;
+    this.moves = [];
+    this.maxes = [];
+    this.mins = [];
+    this.pcs = [];
+    this.pcs2 = [];
+    this.mode = 0;
+    this.buy = 0;
+    this.sell = 0;
+    this.buySIM = 0;
+    this.sellSIM = 0;
+    this.p;
+    this.f;
+    this.longnet = 0;
+    this.net = 0;
+    this.bSig = false;
+    this.gate = true;
 
-var trade = {price: M.Decimal128.fromString(String(0))};
-var buy = [];
-var sell = [];
-var cRSI;
-var cAVG;
-var trend = [];
-var trendtrend = [];
-var m = 0;
-var k = 0;
-var signal = 1;
-var signalp = 1;
-var testbuy = false;
-var testsell = false;
-var enable = false;
-var scythe = false;
 
-function t(){
-  if(cAVG < trade.price) return true;
-  return false;
+    var self = this;
+    if(this.name !== 'FOO' && this.name !== 'foo'  ){
+    //setInterval(function() { self.tickr() }, 6000);
+    }
+  }
 
-}
-async function log(data = []){
-        var output = '';
-        for(item of data){
-              output += String(item).padEnd(15) + ' ';
+  tickr(){
+    console.log('#TICK', this.name,  this.nm.length, this.net);
+  }
+
+  async run(move){
+    this.bSig = false;
+    this.sSig = false;
+
+    this.nm.push(move);
+    if(this.nm.length > this.frame) this.nm.shift();
+    if(this.nm.length < this.frame) return {name: this.name, bSig: this.bSig, sSig: this.sSig}
+
+    var pc = this.round(this.getAvg(this.nm.slice(this.nm.length-this.round(this.frame/5,0), this.nm.length-1)),0);
+    var pc2 = this.round(this.getAvg(this.nm.slice(this.nm.length-this.round(this.frame,0), this.nm.length-1)),0);
+
+    //Big Slope
+    this.pcs2.push(pc2);
+    if(this.pcs2.length > this.frame) this.pcs2.shift();
+    var trend2 = this.slope(this.pcs2);
+
+    var min = Math.min.apply(Math, this.pcs2);
+    var max = Math.max.apply(Math, this.pcs2);
+
+
+
+    //Min slope
+    this.mins.push(min);
+    if(this.mins.length > this.frame) this.mins.shift();
+    var trendMin = this.slope(this.mins);
+
+    //Max slope
+    this.maxes.push(max);
+    if(this.maxes.length > this.frame) this.maxes.shift();
+    var trendMax = this.slope(this.maxes);
+
+
+
+    //Small Slope
+    this.pcs.push(pc);
+    if(this.pcs.length > this.frame) this.pcs.shift();
+    var trend1 = this.slope(this.pcs);
+
+
+
+
+
+    var momentum = (this.getPercentageChange(min, pc2) > this.getPercentageChange(pc2, max)) ? true : false;
+    var above = (move > pc2) ? true : false;
+    var hitMin = (move == min) ? true : false;
+    var isGoodPrice = (this.getPercentageChange(pc, move) < 0.02) ? true : false;
+    var slopeUp = (trend2 > 0) ? true : false;
+    var slopeUp2 = (trend1 > 0) ? true : false;
+    var masterSlope = (trendMin > 0 && trendMax > 0) ? true : false;
+
+    var raise = (pc2 == max && pc > max) ? true : false;
+    var drop = (pc < max) ? true : false;
+    var start = (pc < min) ? true : false;
+
+
+    if(this.gate){
+      switch(this.mode){
+        case 0:
+          if(start){
+            this.mode = 1;
           }
-        console.log(output);
-    }
+        break;
+        case 1:
+          if(raise){
+          //if(pc > min && isGoodPrice){
+            this.mode = 2;
+            this.gate = false;
+            this.bSig = true;
 
-    function delta(value){
-      var d = getAvg(trend);
-      if(trend.length > 15)trend.shift();
-      trend.push(value);
-      return round(d,0);
-    }
-
-    function deltadelta(value){
-      var d = getAvg(trendtrend);
-      if(trendtrend.length > 5)trendtrend.shift();
-      trendtrend.push(value);
-      return round(d,0);
-      if( value > d) return true;
-      return false;
-    }
-
-function getAvg(grades) {
-  const total = grades.reduce((acc, c) => acc + c, 0);
-  return total / grades.length;
-}
-
-function round(value, decimals) {
-      var val = Number(Math.round(value+'e'+decimals)+'e-'+decimals);
-        if(isNaN(val)) return 0;
-        return val;
-    }
-
-function getPercentageChange(ask, bid){
-  if(!ask || !bid) return 0;
-  ask = parseFloat(ask.toString());
-  bid = parseFloat(bid.toString());
-
-        var pc = [(bid - ask)/ask] * 100;
-        if(pc == 'Infinity') return 0;
-        return pc;
-    }
-
-(async function() {
-
-
-  // Connection
-  const dbName = 'scythe1';
-  const url = "mongodb+srv://tk:test123@data.owryg.gcp.mongodb.net/"+dbName+"?retryWrites=true&w=majority";
-  const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true});
-
-  var db;
-
-
-  try {
-    // Connect
-    await client.connect();
-    db = await client.db(dbName).collection("trades");
-    rsiDb = await client.db(dbName).collection("rsi");
-    exec = await client.db(dbName).collection("exec");
-  } catch (err) {
-    console.log(err.stack);
+          }
+        break;
+        case 2:
+          if(drop){
+               this.mode = 0;
+               this.sSig = true;
+               this.gate = false;
+          }
+        break;
+      }
   }
 
-  console.log('init...');
-
-  var binance = new BinanceClient().options({
-          APIKEY: 'dKh1FqWiDlLGVxzWWsE4a3GzSQlgaClnk9K1lXebdBrkXVc4ZiHLKukv6lBVOuWZ',
-          APISECRET: 'NXjBmcFKIHemPviszdYSU6zJ0Xlo6SpHtxcBgLpn7CO3vNs02iQSTxmliBpg7eOb',
-          useServerTime: true, // If you get timestamp errors, synchronize to server time at startup
-          test: true // If you want to use sandbox mode where orders are simulated
-    });
-
-  setInterval(getSignal,1000);
-
-    binance.websockets.trades([symbol], async function(trades){
-       var time = new Date().getTime();
-      let {e:eventType, E:eventTime, s:symbol, p:price, q:quantity, m:maker, a:tradeId} = trades;
-      trade = {eventTime: eventTime, price:  M.Decimal128.fromString(price)};
-
-      //Indicators
-
-      cRSI = rsi.nextValue(trade.price);
-      m = delta(cRSI);
-      k = deltadelta(m);
-      cAVG = round(getAvg(values), 2);
-      values.push( parseFloat(price.toString()) );
-      if(values.length > 200) values.shift();
-      if(values.length < 200) return;
-      enable = true;
-
-//     log([signal, cAVG, parseFloat(trade.price.toString()), round(cRSI,0)+'/'+m+'/'+k,  buy.length + sell.length]);
-      if(!scythe)return;
-            if(signal && buy.length < 5){
-             //buy.push(trade.price);
-            }
-
-            if(!signal && sell.length < 5){
-            // sell.push(trade.price);
-            }
-    });
-
-
-
-})();
-
-function getSignal(){
-  var time = new Date().getTime();
-  var signaln = t();
-  if(signal !== 1){
-    if(signal !== signaln && enable){
-//      console.log(signal, signaln);
-
-      //BUY!!!
-      if(!signal && signaln){
-        testbuy = trade.price;
-        sell.forEach(async function(price, index) {
-          console.log('S', parseFloat(price.toString()), parseFloat(trade.price.toString()), '$'+getPercentageChange(trade.price, price));
-          exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(trade.price, price))) , time: time});
-        });
-        sell = [];
+  //  if(masterSlope) this.bSig = true;
+  /*
+    if(this.gate){
+      switch(this.mode){
+        case 0:
+          if(hitMin) this.mode = 1;
+        break;
+        case 1:
+          if(above && isGoodPrice){
+            this.gate = false;
+            this.bSig = true;
+            this.mode = 2
+          }
+        break;
+        case 2:
+        if(!above){
+          this.gate = false;
+          this.sSig = true;
+          this.mode = 0
+        }
+        break;
       }
-
-      //SELL!!!
-      if(signal && !signaln){
-        testsell = trade.price;
-        buy.forEach(async function(price, index) {
-          console.log('L', parseFloat(price.toString()), parseFloat(trade.price.toString()), '$'+getPercentageChange(price,trade.price));
-          exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(price,trade.price))) , time: time});
-        });
-        buy = [];
-      }
-      if(testbuy && testsell){
-        scythe = true;
-        console.log('SCYTHE', testbuy.toString(), testsell.toString(), getPercentageChange(testbuy, testsell));
-        exec.insertOne({"_id": new ObjectID(), net: M.Decimal128.fromString(String(getPercentageChange(testbuy, testsell))) , time: time});
-        testbuy = false;
-        testsell = false;
-        if(signal) testsell = trade.price;
-        if(!signal) testbuy = trade.price;
-      }
-      signal = signaln;
-
     }
-  }else{
-    signal = signaln;
+    */
+
+
+    //Save to Redis
+    var log = JSON.stringify({move: move, max: max, min: min, pc: pc, pc2: pc2, buy: this.buy, sell: this.sell});
+    this.buy = 0;
+    this.sell = 0;
+    await this.rpush(this.name, log);
+
+
+
+    this.profitLog();
+
+    return {name: this.name, bSig: this.bSig, sSig: this.sSig};
   }
+
+  recordBuy(price){
+    this.gate = true;
+    this.buy = price;
+    this.longbuy = price;
+    console.log('buy!');
+
+  }
+
+  recordSell(price){
+    this.gate = true;
+    this.sell = price;
+    this.longsell = price;
+    console.log('sell');
+  }
+
+  async setMode(val){
+    this.mode = val;
+  }
+
+  async setGate(val){
+    this.gate = val;
+  }
+
+  async getMode(){
+    return this.mode;
+  }
+
+  slope(r){
+    var y2 = r[r.length-1];
+    var y1 = r[r.length-5];
+    return this.round(this.getPercentageChange(y1,y2),3);
+  }
+
+
+  round(value, decimals) {
+    var val = Number(Math.round(value+'e'+decimals)+'e-'+decimals);
+    if(isNaN(val)) return 0;
+    return val;
+  }
+
+  getAvg(grades) {
+    const total = grades.reduce((acc, c) => parseInt(acc) + parseInt(c), 0);
+    return total / grades.length;
+  }
+
+  getPercentageChange(ask, bid){
+    if(!ask || !bid) return 0;
+    ask = parseInt(ask);
+    bid = parseInt(bid);
+    var pc = [(bid - ask)/ask] * 100;
+    if(pc == 'Infinity') return 0;
+    return pc;
+    }
+
+
+    profitLog(){
+      if(this.longbuy && this.longsell){
+        console.log('*SCYTHE',this.longbuy, this.longsell, this.longsell - this.longbuy);
+        this.net += this.longsell - this.longbuy;
+        console.log(this.round(this.net / 100,2));
+        this.longbuy = false;
+        this.longsell = false;
+
+      }
+    }
+
+
 }
 
 
-function bsignals(){
-  return false;
-    //if(signal && cRSI <= 50) return true;
-    if(signal && cRSI <= 52) return true;
-    //if(cAVG > trade.price && cRSI >= 60 && m <= cRSI && m >= 50 && k <= m && k >= 50) return true;
-  //  if(cAVG > trade.price && cRSI >= 65 && k >= 50 && m >= 50 && cRSI >= 60 &&  && ) return true;
-    return false;
-}
 
-function ssignals(){
-  return false;
-   //if(!signal && cRSI >= 50) return true;
-   if(!signal && cRSI >= 48) return true;
-    //if(cAVG < trade.price && cRSI <= 40 && m >= cRSI && m <= 50 && k >= m && k <= 50 ) return true;
-    return false;
-}
+    /*
+    switch(bSig){
+      case true:
+        //if(trend2 > 0.7 && this.getPercentageChange(min, pc2) > 0.4 && pc > pc2 && this.getPercentageChange(pc2, pc) < 0.2){
+        //if(trend2 > 0.005 && pc > pc2 && this.getPercentageChange(pc2, pc) < 0.1 && this.getPercentageChange(min, pc2) > 0.05){
+        if(!this.mode){
+          this.longbuy = pc2;
+          this.mode = true;
+        }
+      break;
+    }
+
+    if(this.mode && pc < pc2){
+      this.longsell = pc2;
+      this.mode = false;
+    }
+
+
+    if(this.mode == 0 && this.getPercentageChange(min, pc) < 0.5) this.mode = 1;
+
+    if(this.mode == 1 && trend2 > 0.7 && this.getPercentageChange(min, pc) > 0.1){
+      this.longbuy = pc;
+      this.mode = 2;
+    }else{
+      this.longbuy = 0;
+    }
+
+    //EXIT
+    if(this.mode == 2 && pc > pc2) this.mode = 3;
+    if(this.mode == 3 && pc < pc2){
+      this.longsell = pc;
+    }else{
+      this.longsell = 0;
+    }
+
+
+
+
+    if(this.longbuy && this.longsell){
+      console.log('*SCYTHE',this.longbuy, this.longsell, this.longsell - this.longbuy);
+      this.longnet += this.longsell - this.longbuy;
+      if(this.longsell - this.longbuy >= 0) p++;
+      if(this.longsell - this.longbuy < 0)f++;
+      this.longbuy = false;
+      this.longsell = false;
+      this.mode = 0;
+    }
+*/
